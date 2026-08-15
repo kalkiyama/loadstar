@@ -6,6 +6,11 @@
 
 **JMeter power without JMeter's pain — self-hosted and free.**
 
+> Source-available under Apache-2.0: read it, run it, fork it. Loadstar is developed
+> by a single maintainer and is **not accepting external contributions** — issues and
+> pull requests are disabled. Security vulnerabilities are the exception: please open a
+> private advisory (see `SECURITY.md`).
+
 Describe the test you want — load, stress, spike, soak, or a click-through browser flow —
 and Loadstar generates and runs it (JMeter, k6, or Playwright), streams the results into
 an instrument-grade report, and has Claude tell you what the numbers mean.
