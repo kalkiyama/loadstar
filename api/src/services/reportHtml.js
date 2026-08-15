@@ -54,6 +54,41 @@ const th = (v) =>
    or broken endpoint must not be able to hide inside a healthy blended average.
    Rendered only when there is more than one endpoint: a single-endpoint test already
    has this information in the aggregate, and a one-row table is noise. */
+/* Run-level HTTP status distribution. Mirrors worker/statuscodes.mjs (unit-tested
+   there); exports render everything, so no collapsing here. */
+function statusStrip(s) {
+  const rows = (s && s.per_endpoint) || [];
+  const counts = new Map();
+  let coded = 0;
+  for (const r of rows) {
+    const codes = (r && r.status_codes) || {};
+    for (const code in codes) {
+      const c = Number(code);
+      if (!isFinite(c) || c <= 0) continue;
+      const k = Number(codes[code]) || 0;
+      counts.set(c, (counts.get(c) || 0) + k);
+      coded += k;
+    }
+  }
+  if (!counts.size) return "";
+  const total = Number(s && s.total_requests) || 0;
+  const list = [...counts.entries()].sort((a, b) => a[0] - b[0]).map(([code, count]) => ({ code, count }));
+  /* Silence is not a 200: requests that got no response at all are named. */
+  const missing = total - coded;
+  if (missing > 0) list.push({ code: 0, count: missing });
+  const showPct = list.length > 1 && total > 0;
+  const colorOf = (c) => (c === 0 || c >= 500) ? C.coral : c >= 400 ? "#d98324" : c >= 300 ? C.ink2 : C.ink;
+  const chips = list.map((x) => {
+    const label = x.code === 0 ? "no response" : String(x.code);
+    const pct = showPct ? ` (${((x.count / total) * 100).toFixed(1)}%)` : "";
+    return `<span style="display:inline-block;margin:0 18px 4px 0;white-space:nowrap;color:${colorOf(x.code)};font-size:13px">` +
+      `<b>${esc(label)}</b> &#215; ${x.count.toLocaleString()}${esc(pct)}</span>`;
+  }).join("");
+  return `<h2 style="font-size:15px;margin:24px 0 8px">HTTP status codes</h2>` +
+    `<p style="font-size:12px;color:${C.ink2};margin:0 0 10px">What the target actually answered, across every request in this run.</p>` +
+    `<div style="line-height:1.9">${chips}</div>`;
+}
+
 function endpointTable(s) {
   const rows = s && s.per_endpoint;
   if (!Array.isArray(rows) || rows.length < 2) return "";
@@ -65,9 +100,13 @@ function endpointTable(s) {
   const body = rows
     .map((r) => {
       const bad = (r.errors || 0) > 0;
+      // A sub-sample is one hop of a redirect chain, not a separate endpoint.
+      const subTag = r.sub_sample ? (r.redirect_hop ? " \u21b3 redirect hop" : " \u21b3 sub-request") : "";
       const nameCell =
         `<td style="padding:8px 12px;border-bottom:1px solid ${C.grid};font-size:13px;` +
-        (bad ? `color:${C.coral};font-weight:600` : "") + `">${esc(r.name)}</td>`;
+        (r.sub_sample ? "padding-left:26px;opacity:.8;" : "") +
+        (bad ? `color:${C.coral};font-weight:600` : "") + `">${esc(r.name)}` +
+        (subTag ? `<span style="color:${C.ink2};font-size:11px">${esc(subTag)}</span>` : "") + `</td>`;
       const errCell =
         `<td style="padding:8px 12px;border-bottom:1px solid ${C.grid};font-family:monospace;font-size:13px;` +
         (bad ? `color:${C.coral};font-weight:600` : "") + `">${esc(String(r.errors))}</td>`;
@@ -212,7 +251,6 @@ export function renderReportHtml({ test, run, summary, timeseries, analysis, his
     </div>` : ""}
     <h2 style="font-size:17px;margin:0 0 8px">Results</h2>
     ${metricsTable(summary)}
-    ${endpointTable(summary)}
     ${timeseries?.length ? `<h2 style="font-size:17px;margin:26px 0 8px">Response time over the run</h2>${svgChart(timeseries)}` : ""}
     ${stepsTable(summary)}
 
@@ -224,6 +262,8 @@ export function renderReportHtml({ test, run, summary, timeseries, analysis, his
     ${bullets("Findings", analysis?.findings)}
     ${bullets("Recommendations", analysis?.recommendations)}
     ${bullets("Suspected causes", analysis?.suspected_causes)}
+    ${statusStrip(summary)}
+    ${endpointTable(summary)}
 
     <p style="margin-top:30px;font-size:11px;color:${C.ink2};font-family:monospace">
       Loadstar · open-source performance &amp; browser testing${analysis?.verdict ? " · AI analysis by Claude" : ""} · run ${esc(run.id)}</p>

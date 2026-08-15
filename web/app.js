@@ -36,14 +36,107 @@ function exportCard(run) {
    single-endpoint test already says everything in the aggregate, and a one-row
    table is noise. Slowest p95 first: the point is that a bad endpoint cannot
    hide inside a healthy blended average. */
+// NOTE: mirrors subSampleSummary in worker/subsample_summary.mjs — browser code
+// cannot import server modules (app.js is a plain <script>, no build step). The
+// worker-side copy is the one under unit test; this one is presentation only.
+// If you change the summary text, change BOTH.
+function subSampleSummary(parent, rows) {
+  if (!parent || !Array.isArray(rows)) return null;
+  const kids = rows.filter((r) => r && r.sub_sample && r.sub_of === parent.name);
+  if (!kids.length) return null;
+  const hops = kids.filter((r) => r.redirect_hop);
+  const redirectMs = hops.reduce((n, r) => n + (Number(r.avg_ms) || 0), 0);
+  const parts = [kids.length + " sub-request" + (kids.length === 1 ? "" : "s")];
+  if (hops.length && redirectMs > 0) {
+    const t = redirectMs >= 1000 ? +(redirectMs / 1000).toFixed(1) + "s" : Math.round(redirectMs) + "ms";
+    parts.push(t + " in redirect" + (hops.length === 1 ? "" : "s"));
+  }
+  return { count: kids.length, text: parts.join(" \u00b7 ") };
+}
+
+// NOTE: mirrors statusRollup in worker/statuscodes.mjs — browser code cannot
+// import server modules (app.js is a plain <script>, no build step). The
+// worker-side copy is the one under unit test. Change BOTH.
+function statusStripHtml(s) {
+  const rows = (s && s.per_endpoint) || [];
+  const counts = new Map();
+  let coded = 0;
+  for (const r of rows) {
+    const codes = (r && r.status_codes) || {};
+    for (const code in codes) {
+      const c = Number(code);
+      if (!isFinite(c) || c <= 0) continue;
+      const k = Number(codes[code]) || 0;
+      counts.set(c, (counts.get(c) || 0) + k);
+      coded += k;
+    }
+  }
+  if (!counts.size) return "";
+  const total = Number(s && s.total_requests) || 0;
+  const list = [...counts.entries()].sort((a, b) => a[0] - b[0])
+    .map(([code, count]) => ({ code, count }));
+  /* A status roll-up counts RESPONSES. Connection refused / timeout / reset
+     produce NO code at all, so a dead-target run would show a tidy strip beside
+     a 100% error rate. Name the silence. */
+  const missing = total - coded;
+  if (missing > 0) list.push({ code: 0, count: missing });
+  const showPct = list.length > 1 && total > 0;
+  const colorOf = (c) =>
+    c === 0 ? "var(--coral)" :
+    c >= 500 ? "var(--coral)" :
+    c >= 400 ? "var(--amber, #d98324)" :
+    c >= 300 ? "var(--muted)" : "inherit";
+  const chips = list.map((x) => {
+    const label = x.code === 0 ? "no response" : String(x.code);
+    const pct = showPct ? ` <span class="hint">(${((x.count / total) * 100).toFixed(1)}%)</span>` : "";
+    return `<span style="white-space:nowrap;color:${colorOf(x.code)}">` +
+      `<b>${escapeHtml(label)}</b> \u00d7 ${x.count.toLocaleString()}${pct}</span>`;
+  }).join("");
+  return `<div class="ai-card" style="margin:14px 0">
+      <span class="ai-eyebrow">HTTP status codes</span>
+      <p class="hint" style="margin:6px 0 10px">What the target actually answered, across every request in this run.</p>
+      <div style="font-size:13px;line-height:1.9;display:flex;flex-wrap:wrap;gap:4px 18px">${chips}</div>
+    </div>`;
+}
+
 function endpointTableHtml(s) {
   const rows = s && s.per_endpoint;
-  if (!Array.isArray(rows) || rows.length < 2) return "";
+  if (!Array.isArray(rows)) return "";
+  const parents = rows.filter((r) => !r.sub_sample);
+  const hasSubs = rows.some((r) => r.sub_sample);
+  /* Was: hide below 2 rows. Now: 2+ parents OR any sub-samples — one endpoint
+     with a redirect chain is exactly the case worth showing. */
+  if (parents.length < 2 && !hasSubs) return "";
+
   const body = rows
     .map((r) => {
       const bad = (r.errors || 0) > 0;
-      return `<tr${bad ? ' style="color:var(--coral)"' : ""}>` +
-        `<td style="padding:6px 10px">${escapeHtml(r.name)}</td>` +
+      const st = [];
+      if (bad) st.push("color:var(--coral)");
+      /* Sub-samples start hidden: ten endpoints with redirect chains is a thirty
+         row table. Parents are the question; hops are the detail. */
+      if (r.sub_sample) st.push("display:none");
+      const cls = r.sub_sample ? ' class="ep-sub" data-parent="' + escapeHtml(r.sub_of) + '"' : "";
+      let nameHtml;
+      if (r.sub_sample) {
+        const tag = r.redirect_hop ? "\u21b3 redirect hop" : "\u21b3 sub-request";
+        nameHtml = `<span style="opacity:.75;padding-left:18px">${escapeHtml(r.name)}</span>` +
+          `<span class="hint" style="margin-left:8px">&nbsp;${tag}</span>`;
+      } else {
+        const sum = subSampleSummary(r, rows);
+        if (sum) {
+          /* A collapsed parent must still SAY what is beneath it, redirect cost
+             included — otherwise collapsing quietly undoes "label, don't fold". */
+          nameHtml = `<button type="button" class="ep-toggle" data-parent="${escapeHtml(r.name)}" ` +
+            `aria-expanded="false" style="background:none;border:0;color:inherit;font:inherit;cursor:pointer;padding:0">` +
+            `<span class="ep-caret">\u25b8</span> ${escapeHtml(r.name)}</button>` +
+            `<span class="hint" style="margin-left:8px">&nbsp;${escapeHtml(sum.text)}</span>`;
+        } else {
+          nameHtml = escapeHtml(r.name);
+        }
+      }
+      return `<tr${cls}${st.length ? ` style="${st.join(";")}"` : ""}>` +
+        `<td style="padding:6px 10px">${nameHtml}</td>` +
         `<td style="padding:6px 10px;text-align:right">${r.requests}</td>` +
         `<td style="padding:6px 10px;text-align:right"><b>${r.errors}</b></td>` +
         `<td style="padding:6px 10px;text-align:right">${r.error_rate}%</td>` +
@@ -52,9 +145,10 @@ function endpointTableHtml(s) {
         `<td style="padding:6px 10px;text-align:right">${r.p99_ms} ms</td></tr>`;
     })
     .join("");
+
   return `<div class="ai-card" style="margin:14px 0">
       <span class="ai-eyebrow">Per-endpoint breakdown</span>
-      <p class="hint" style="margin:6px 0 10px">Slowest first. The headline numbers below can look healthy while a single endpoint is not — this is where to look.</p>
+      <p class="hint" style="margin:6px 0 10px">Slowest first. The headline numbers below can look healthy while a single endpoint is not \u2014 this is where to look.</p>
       <table style="width:100%;border-collapse:collapse;font-size:13px">
         <tr style="text-align:left;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em">
           <th style="padding:6px 10px">Endpoint</th>
@@ -68,6 +162,24 @@ function endpointTableHtml(s) {
       </table>
     </div>`;
 }
+
+/* One delegated listener covers every toggle, including after a re-render. */
+document.addEventListener("click", function (ev) {
+  const btn = ev.target && ev.target.closest && ev.target.closest(".ep-toggle");
+  if (!btn) return;
+  const parent = btn.getAttribute("data-parent") || "";
+  const open = btn.getAttribute("aria-expanded") === "true";
+  btn.setAttribute("aria-expanded", open ? "false" : "true");
+  const caret = btn.querySelector(".ep-caret");
+  if (caret) caret.textContent = open ? "\u25b8" : "\u25be";
+  const subs = document.querySelectorAll(".ep-sub");
+  for (let i = 0; i < subs.length; i++) {
+    if (subs[i].getAttribute("data-parent") === parent) {
+      subs[i].style.display = open ? "none" : "";
+    }
+  }
+});
+
 
 /* The server's effective limits. The form used to hardcode max="500" etc., which
    silently contradicted .env — one source of truth now. */
@@ -781,7 +893,6 @@ function renderRun(run) {
       <p class="hint" style="margin:6px 0 0">Stops the engine. Results collected so far are kept and the run is marked <b>cancelled</b> — it will not be used for comparisons or as a baseline.</p>
       <p class="hint" id="stop-status" hidden></p>
     </div>` : ""}
-    ${endpointTableHtml(s)}
     <div class="metric-grid">
       ${m("Requests", s.total_requests)}
       ${m("Throughput", s.throughput_rps, "req/s")}
@@ -804,6 +915,8 @@ function renderRun(run) {
       </div>` : ""}
     ${slaCard(s)}
     <div id="ai-slot"></div>
+    ${statusStripHtml(s)}
+    ${endpointTableHtml(s)}
     ${exportCard(run)}`;
 
   if (run.timeseries?.length) drawChart($("#ts-chart"), run.timeseries);

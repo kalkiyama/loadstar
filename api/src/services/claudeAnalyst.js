@@ -1,4 +1,5 @@
 import { loadProfile } from "../db.js";
+import { filterSubSamples } from './subSampleFilter.mjs';
 /**
  * AI results analysis via the Anthropic API.
  * Sends only aggregated metrics (never response bodies or credentials) to keep
@@ -21,6 +22,22 @@ const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 const MAX_ENDPOINT_ROWS = 15;
 
 function capEndpoints(summary) {
+  /* Healthy sub-samples (redirect hops etc) go FIRST and UNCONDITIONALLY - the
+     row cap below only fires above MAX_ENDPOINT_ROWS, but hops crowd out the
+     bullet budget at ANY table size. Unhealthy hops survive: if a redirect
+     starts 500ing, that hop is the finding. */
+  const filtered = filterSubSamples(summary && summary.per_endpoint);
+  if (filtered.dropped > 0) {
+    summary = {
+      ...summary,
+      per_endpoint: filtered.rows,
+      per_endpoint_subsamples_omitted:
+        filtered.dropped + " healthy redirect/sub-request hop(s) were folded into their " +
+        "parent endpoints and omitted here. They are NOT missing coverage and NOT a " +
+        "vanished route - the user sees them in the report table. Analyse the parent " +
+        "rows; you may still note that a parent's time includes a redirect chain.",
+    };
+  }
   const rows = summary && summary.per_endpoint;
   if (!Array.isArray(rows) || rows.length <= MAX_ENDPOINT_ROWS) return summary;
 
@@ -63,6 +80,7 @@ IMPORTANT — how to read the configuration:
 - If throughput is FLAT across a wide range of virtual users while NOTHING is CPU-saturated, do not conclude "the target has reached its ceiling". A shared bottleneck BENEATH the generator — the network, the host, the virtualisation layer — produces exactly that signature. Say the throughput did not scale, say you cannot tell why from this data, and recommend running the generator on a separate machine from the target.
 - "generator" reports the LOAD GENERATOR CONTAINER's own CPU usage during the test window (avg_load_ratio / peak_load_ratio = fraction of the generator's CPU capacity used, 0..1). "saturated" is true only when the generator was SUSTAINEDLY CPU-bound (average >= 0.85, or two or more consecutive samples >= 0.90) — a single brief spike, such as the JMeter JVM starting up, is NOT saturation and does not set the flag. If "saturated" is true, the GENERATOR was starved of CPU: requests queued inside the load tool rather than at the target, so latency is inflated and throughput plateaued for reasons that have NOTHING to do with the target. Do not diagnose the target as slow or overloaded when the generator was saturated — say the results are unreliable and recommend fewer virtual users or generators on separate machines. If "saturated" is false, the generator was NOT the bottleneck and you may read the latency and throughput numbers at face value. Runs recorded before this metric was fixed may show peak_load_ratio above 1.0 and lack a "metric" field — those older readings came from a 60-second load average that could not resolve a 15-30 second test, so treat their saturation flag as unreliable in BOTH directions.
 - "per_endpoint" is a PER-ENDPOINT breakdown: one row per request label, each with requests, errors, error_rate, assertion counts, throughput_rps and avg/min/max/p50/p90/p95/p99. THIS IS OFTEN WHERE THE REAL ANSWER IS. A blended p95 can look healthy while ONE endpoint is catastrophically slow: four endpoints at 5ms and one at 2000ms average out to something that reads as fine. Do NOT stop at the aggregate. Name the guilty endpoint explicitly — "GET /checkout is the problem: p95 2100ms vs 4ms everywhere else" — rather than saying "some requests were slow". Likewise for errors: if error_rate is 33% overall but all of it belongs to one endpoint, say so, because that is a bug in one route, not a capacity problem. If the rows are all similar, say THAT too — a uniformly slow system is a different diagnosis from one bad route, and the distinction changes what the user should do next.
+- SUB-REQUESTS: JMeter records each hop of a redirect chain as its own row named "<parent>-0", "<parent>-1". Healthy hops are folded into their parent before you see them, and a "_subsamples_omitted" note appears when that happened. Analyse the PARENT endpoints. An UNHEALTHY hop (errors, assertion failures, or a non-2xx/3xx status) is NOT filtered and will appear - if you see one, it is there because it is broken, so treat it as a real finding and name it. CRITICAL: hop rows present in "history" but absent from this run are NOT vanished routes and NOT lost coverage - they were filtered for being healthy. Never report a "-0"/"-1" row disappearing as a regression or a coverage loss.
 - "per_endpoint" may be TRUNCATED (a "_truncated" note appears in the data when it is). It always includes every endpoint that had errors, plus the slowest by p95. If it is truncated, do not claim to have seen every endpoint.
 - EXPECTED NON-2xx RESPONSES ARE NOT FAILURES. If a request declares assert.status (e.g. 404 for a not-found handler, 401 for an auth path, 429 for a rate limiter), then receiving that status is a PASS, not an error — Loadstar no longer counts it in "errors". So a test can show a 404 in status_codes with ZERO errors, and that is correct and healthy: it means someone deliberately tested a negative path and it behaved. Do not describe such an endpoint as broken. If instead you see a non-2xx status accompanied by ERRORS, that status was NOT expected, and it is a real failure. The presence of a 4xx/5xx in status_codes is therefore not sufficient to call something broken — check whether it produced errors.
 - "status_codes" on each endpoint is the HTTP status distribution, e.g. {"200": 14629, "404": 14625}. USE IT — "33% errors" is not a diagnosis. 404 means a bad route or a missing path. 500 means a server bug. 503 means the target ran out of capacity, which IS a load finding. 401/403 means auth broke. 429 means the target rate-limited you, which means your load exceeded what it will accept rather than what it can serve. These are entirely different problems and demand different recommendations, so name the actual code rather than saying "errors". Also watch 3xx: a redirect is neither success nor failure, and a target that suddenly starts redirecting everything (e.g. to a login page) can show a clean 0% error rate while serving nothing useful.

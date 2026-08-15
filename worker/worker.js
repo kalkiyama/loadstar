@@ -8,6 +8,7 @@
  * boundaries (claim → execute → aggregate) are already shaped for that.
  */
 import { spawn } from "node:child_process";
+import { markSubSamples, sortWithSubSamples } from './subsamples.mjs';
 import fs from "node:fs";
 import os from "node:os";
 import readline from "node:readline";
@@ -595,9 +596,12 @@ function makeEndpointTable() {
         };
       });
       const real = rows.filter((r) => r.requests > 0);
-      real.sort((a, b) => b.p95_ms - a.p95_ms || b.requests - a.requests);
+      /* Label JMeter sub-samples (redirect hops et al) BEFORE sorting, then sort
+         parents by p95 DESC and tuck each parent's sub-samples beneath it. */
+      markSubSamples(real);
+      const ordered = sortWithSubSamples(real);
       rows.length = 0;
-      rows.push(...real);
+      rows.push(...ordered);
       if (capped) {
         rows.push({
           name: "(truncated: more than " + LABEL_CAP + " distinct labels)",
@@ -1096,8 +1100,11 @@ async function runAsController(run, t) {
             ),
           };
         });
-        rows.sort((a, b) => b.p95_ms - a.p95_ms || b.requests - a.requests);
-        summary.per_endpoint = rows;
+        /* The merge REBUILDS every row from the shard snapshots, so sub-sample
+           flags must be re-derived here - they cannot survive that round trip.
+           Same function as the single-worker path: one implementation, never a copy. */
+        markSubSamples(rows);
+        summary.per_endpoint = sortWithSubSamples(rows);
       }
 
       const sla = evaluateSla(t.sla, summary);

@@ -105,11 +105,45 @@ const escHtml = (s) =>
 const COLORS = { pass: "#14A06B", degraded: "#E8960C", fail: "#FF4F30" };
 const TREND = { improving: "▲ Improving", regressing: "▼ Regressing", stable: "► Stable", first_run: "● First run" };
 
+/* One plain-text status line for the email. Deliberately NOT the colour-coded
+   strip from the web report: email clients strip CSS, and a row in the metrics
+   table that already renders everywhere beats a section that renders nowhere.
+   Mirrors worker/statuscodes.mjs (unit-tested there). */
+function statusText(summary) {
+  const rows = (summary && summary.per_endpoint) || [];
+  const counts = new Map();
+  let coded = 0;
+  for (const r of rows) {
+    const codes = (r && r.status_codes) || {};
+    for (const code in codes) {
+      const c = Number(code);
+      if (!isFinite(c) || c <= 0) continue;
+      const k = Number(codes[code]) || 0;
+      counts.set(c, (counts.get(c) || 0) + k);
+      coded += k;
+    }
+  }
+  if (!counts.size) return "";
+  const total = Number(summary && summary.total_requests) || 0;
+  const list = [...counts.entries()].sort((a, b) => a[0] - b[0]).map(([code, count]) => [String(code), count]);
+  /* Silence is not a 200: a request that got no response at all carries no
+     status code, and must not vanish from a summary someone reads instead of
+     opening the report. */
+  const missing = total - coded;
+  if (missing > 0) list.push(["no response", missing]);
+  const showPct = list.length > 1 && total > 0;
+  return list
+    .map(([label, n]) => label + " \u00d7 " + n.toLocaleString() +
+      (showPct ? " (" + ((n / total) * 100).toFixed(1) + "%)" : ""))
+    .join("  \u00b7  ");
+}
+
 function metricRows(summary) {
   const rows =
     summary?.test_type === "browser"
       ? [["Flows passed", `${summary.flows_passed}/${summary.flows_total}`], ["Pass rate", summary.pass_rate + "%"], ["Avg flow time", summary.avg_flow_ms + " ms"], ["Slowest flow", summary.max_flow_ms + " ms"]]
-      : [["Requests", summary?.total_requests], ["Throughput", summary?.throughput_rps + " req/s"], ["Error rate", summary?.error_rate + "%"], ["p95", fmtMs(summary?.p95_ms)]];
+      : [["Requests", summary?.total_requests], ["Throughput", summary?.throughput_rps + " req/s"], ["Error rate", summary?.error_rate + "%"], ["p95", fmtMs(summary?.p95_ms)],
+         ...(statusText(summary) ? [["Status codes", statusText(summary)]] : [])];
   return rows
     .map(
       ([k, v]) => `<tr>
