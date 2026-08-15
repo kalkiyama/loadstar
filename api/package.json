@@ -1,7 +1,7 @@
 {
   "name": "loadstar-api",
   "version": "0.1.0",
-  "description": "Loadstar — open-source performance testing platform (API + orchestrator)",
+  "description": "Loadstar \u2014 open-source performance testing platform (API + orchestrator)",
   "type": "module",
   "main": "src/server.js",
   "scripts": {
@@ -20,5 +20,8 @@
     "pptxgenjs": "^4.0.1",
     "uuid": "^14.0.1"
   },
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "overrides": {
+    "ip-address": ">=10.5.0"
+  }
 }
