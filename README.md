@@ -15,8 +15,6 @@ Describe the test you want — load, stress, spike, soak, or a click-through bro
 and Loadstar generates and runs it (JMeter, k6, or Playwright), streams the results into
 an instrument-grade report, and has Claude tell you what the numbers mean.
 
-![Loadstar in 90 seconds: describe a test, watch live metrics, read the AI verdict](docs/demo.gif)
-
 **Why it exists:** the load-testing world is bimodal — powerful-but-painful open source,
 and pleasant-but-expensive SaaS. Loadstar is the empty seat between them: a pleasant,
 self-hostable, open-source control plane.
