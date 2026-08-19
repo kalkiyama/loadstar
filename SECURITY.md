@@ -17,7 +17,11 @@ requirements, not afterthoughts.
 - API-key authentication (`X-API-Key`), designed to be replaced by full
   user accounts + RBAC + SSO/SAML in the SaaS phase
 - Rate limiting on all routes; JSON body size capped at 256 KB
-- Security headers via helmet, including a restrictive CSP
+- Security headers via helmet, including a restrictive CSP. HSTS and
+  `upgrade-insecure-requests` are **off by default** — Loadstar serves plain HTTP,
+  and both break the UI (and, in HSTS's case, poison the browser's view of
+  `localhost` for a year). Set `LOADSTAR_BEHIND_TLS=true` when a reverse proxy
+  terminates TLS in front of Loadstar; both headers are then emitted.
 - Parameterized SQL everywhere — no string-built queries
 - Input validation on every write endpoint; HTML escaping in the UI
 - Central error handler: stack traces never reach clients
@@ -89,3 +93,45 @@ check and the load engine's own DNS lookup. Fully closing it requires pinning th
 resolved IP through both k6 and JMeter while preserving the Host header. Exploiting
 the window requires an attacker who already controls the target's DNS and has passed
 domain verification.
+
+## Dependency advisories: what is flagged, and why it is not reachable
+
+GitHub currently reports 12 Dependabot alerts on this repository, 5 of them High. All 12
+have been reviewed. **None is reachable in Loadstar as shipped.** Rather than silence the
+alerts, the reasoning is published here — a suppressed advisory tells you nothing about
+whether it mattered.
+
+**Ten of the twelve are in `mcp-server/`.** That package declares exactly two
+dependencies: `@modelcontextprotocol/sdk` and `zod`. Everything flagged arrives beneath
+the SDK.
+
+- **`hono` and `@hono/node-server` — 5 alerts.** CORS ReDoS, language-middleware
+  algorithmic DoS, `memo()` retaining SSR output across requests, proxy helper header
+  handling, and a Windows-only `serve-static` path traversal. The MCP server uses
+  `StdioServerTransport`: it communicates over stdin/stdout and **never opens a socket**.
+  The SDK's HTTP transport — the only thing that would load `hono` — is never imported.
+  These are unreachable by construction, not merely unused.
+- **`ip-address` — 3 alerts.** SSRF and trust-boundary bypasses: leading-zero octets
+  parsed as decimal where resolvers read octal, IPv4-mapped/NAT64 misclassification, and
+  a CIDR suffix suppressing special-use classification.
+- **`fast-uri` — 2 alerts.** Host confusion via a backslash authority delimiter.
+
+**On the `ip-address` and `fast-uri` alerts specifically.** Five advisories about SSRF and
+URL-parsing confusion, in a tool whose safety model is a target allow-list, deserves a
+direct answer rather than a reassurance. It is this: `api/src/lib/ssrfGuard.js` — the
+single implementation of "is this address internal", used by the running app and asserted
+directly by `verify_ssrf.mjs` — **imports `node:net` and nothing else.** That was decided
+long before these CVEs, after an inlined copy of the same logic drifted and stopped
+proving anything. Loadstar's address classification has no third-party parser to be
+confused. The flagged packages sit under an HTTP transport that is never loaded and play
+no part in deciding whether a target may be tested.
+
+**The remaining two are `image-size` in `api/`** — infinite loops in the ICNS, JXL and
+HEIF parsers. Loadstar never invokes those parsers; the dependency arrives via PowerPoint
+export. Accepted rather than fixed, because the available fix breaks PPTX generation.
+Documented here rather than dismissed.
+
+**This assessment is a snapshot.** It was made on 18 August 2026 against the alerts open
+that day. New advisories are not covered by it, and the reasoning above is only valid
+while `mcp-server` remains stdio-only and `ssrfGuard.js` remains dependency-free. Both are
+load-bearing; changing either invalidates this section.

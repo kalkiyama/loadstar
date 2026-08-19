@@ -54,7 +54,17 @@ body {
   background: none; color: var(--ink-2); cursor: pointer;
 }
 .tab:hover { color: var(--ink); }
-.tab.active { color: var(--ink); border-color: var(--line); background: var(--paper); }
+/* Was all-grey — darker text on a grey border — which read as "hovered", not
+   "chosen". A 22% tint was tried first and was still too quiet here. Solid fill:
+   a tab says WHICH VIEW YOU ARE IN and should be unmistakable, unlike the
+   pickers where the tint plus a doubled border is enough. Matches
+   .filter.active, so the tool speaks one language for "selected". */
+.tab.active {
+  color: #fff;
+  border-color: var(--blue);
+  background: var(--blue);
+  font-weight: 600;
+}
 .tab:focus-visible, .btn:focus-visible, .mode:focus-visible,
 input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline: 2px solid var(--blue); outline-offset: 2px;
@@ -101,7 +111,15 @@ textarea { resize: vertical; }
 }
 .mode b { font-family: var(--body); font-size: 13px; font-weight: 600; }
 .mode i { font-style: normal; font-family: var(--mono); font-size: 10px; color: var(--ink-2); }
-.mode.active { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 7%, white); }
+/* Selected state must be readable at a glance: a 7% tint on white was not.
+   The engine and mode pickers are the primary configuration controls — if the
+   user cannot tell what is selected, they cannot trust what they are running. */
+.mode.active {
+  border-color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 22%, white);
+  box-shadow: inset 0 0 0 1px var(--blue);
+  font-weight: 600;
+}
 
 .form-actions { display: flex; align-items: center; gap: 16px; margin-top: 24px; }
 .btn {
@@ -194,7 +212,6 @@ input[type="file"] { font-family: var(--body); padding: 8px; background: var(--c
 }
 .ttype b { font-family: var(--display); font-size: 15px; }
 .ttype i { font-style: normal; font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); }
-.ttype.active { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 7%, white); }
 
 /* ————— step builder ————— */
 .step-row {
@@ -295,9 +312,13 @@ form#test-form.no-type > *:not(#type-toggle) { display: none !important; }
   font-family: var(--mono); font-size: 10.5px; color: var(--ink-2);
   background: var(--paper, #f4f6f8); padding: 3px 8px; border-radius: 6px;
 }
+/* Single definition. There were TWO .ttype.active rules — 22% here and 5%
+   further down — and the later one silently won, so raising the first did
+   nothing. Matches .mode.active. */
 .ttype.active {
   border-color: var(--blue);
-  background: color-mix(in srgb, var(--blue) 5%, white);
+  background: color-mix(in srgb, var(--blue) 22%, white);
+  box-shadow: inset 0 0 0 1px var(--blue);
 }
 .ttype.active::after {
   content: "selected"; position: absolute; top: 12px; right: 13px;

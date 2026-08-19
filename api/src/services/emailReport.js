@@ -177,7 +177,7 @@ export function renderRunEmail({ test, run, summary, analysis, history }) {
     <div style="background:#fff;border:1px solid #C9D3DB;border-top:none;border-radius:0 0 10px 10px;padding:24px 22px">
       <h2 style="margin:0 0 4px;font-size:19px">${escHtml(test.name)}</h2>
       <p style="margin:0 0 14px;color:#5A6B7A;font-size:12px;font-family:monospace">
-        ${summary?.test_type === "browser" ? "browser test" : (test.mode || "load") + " test"} · ${escHtml(new URL(test.target_url).hostname)}${
+        ${summary?.test_type === "browser" ? "browser test" : (test.mode || "load") + " test"} · ${summary?.test_type === "browser" ? escHtml(test.browser || "chromium") : escHtml(test.engine || "jmeter")} · ${escHtml(new URL(test.target_url).hostname)}${
           (() => {
             let secs = summary?.wall_seconds;
             if (secs == null && run.started_at && run.finished_at)

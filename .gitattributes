@@ -1,0 +1,6 @@
+# Batch files must keep CRLF endings — cmd.exe can mis-parse labels and goto
+# targets in an LF file, and these launchers depend on both. Written on macOS,
+# so without this git would normalise them back to LF.
+*.bat text eol=crlf
+*.sh  text eol=lf
+*.command text eol=lf

@@ -198,9 +198,14 @@ async function loadLimits() {
       if (LIMITS.max_duration_secs > 0) dur.max = String(LIMITS.max_duration_secs);
       else dur.removeAttribute("max"); // 0 = no limit
     }
-  } catch { /* keep the defaults if /config is unreachable */ }
+  } catch (e) {
+    // Keep the defaults, but SAY SO. A bare catch here once swallowed a
+    // ReferenceError for six weeks: loadLimits() was invoked above the
+    // definitions of $ and api, so every server limit in .env was silently
+    // ignored by the form while the comment below claimed one source of truth.
+    console.error("[loadstar] /config failed — form limits fall back to HTML defaults:", e);
+  }
 }
-loadLimits();
 
 const fmtMs = (v) => (v == null ? "—" : Number(v) < 1 ? "<1 ms" : `${v} ms`);
 /* Loadstar UI — zero-dependency SPA. */
@@ -251,6 +256,10 @@ const api = (p, opts = {}) =>
     return j;
   });
 
+// Invoked HERE, not at the definition: loadLimits needs $ and api, both
+// declared below its own body. Called earlier it throws ReferenceError.
+loadLimits();
+
 let activeRunPoll = null;
 
 /* ————— View switching ————— */
@@ -284,7 +293,11 @@ $("#mode-picker").addEventListener("click", (e) => {
   const btn = e.target.closest(".mode");
   if (!btn) return;
   mode = btn.dataset.mode;
-  $$(".mode").forEach((m) => m.classList.toggle("active", m === btn));
+  /* Scoped to #mode-picker. The engine buttons are class="mode eng" — they
+     borrow `mode` for styling — so an unscoped $$(".mode") also stripped
+     `active` from JMeter/k6 on every mode click. The `engine` variable kept its
+     value, so runs used the right engine while the UI showed none selected. */
+  $$(".mode", $("#mode-picker")).forEach((m) => m.classList.toggle("active", m === btn));
 });
 $('select[name="method"]').addEventListener("change", (e) => {
   $("#body-field").hidden = e.target.value === "GET" || e.target.value === "HEAD";
@@ -695,7 +708,6 @@ $("#multi-toggle")?.addEventListener("change", (e) => {
   multiOn = e.target.checked;
   $("#requests-builder").hidden = !multiOn;
   // hide the single-request method/body when multi is on
-  document.querySelectorAll('.http-only').forEach(() => {});
   $('select[name="method"]').closest(".field").style.display = multiOn ? "none" : "";
   $("#body-field").style.display = multiOn ? "none" : "";
   if (multiOn && !$$(".request-row").length) addRequestRow({ method:"GET", path:"/" });
@@ -813,7 +825,7 @@ async function loadRuns() {
         : (r.summary?.p95_ms != null ? "p95 " + fmtMs(r.summary.p95_ms) : "");
       row.innerHTML = `
         <span class="run-name">${escapeHtml(r.test_name)}</span>
-        <span class="run-meta">${isBrowser ? "browser · " + escapeHtml(r.browser || "chromium") : escapeHtml(r.mode || "") + (r.engine ? " · " + escapeHtml(r.engine) : "")}</span>
+        <span class="run-meta">${isBrowser ? "browser · playwright · " + escapeHtml(r.browser || "chromium") : escapeHtml(r.mode || "") + (r.engine ? " · " + escapeHtml(r.engine) : "")}</span>
         <span class="run-meta">${stat}</span>
         <span class="run-meta">${new Date(r.created_at).toLocaleString()}</span>
         <span class="pill ${r.status}">${r.status}</span>`;
@@ -883,7 +895,12 @@ function renderRun(run) {
     <div class="report-head">
       <h1>${escapeHtml(run.test_name || "Run")}</h1>
       <span class="pill ${run.status}">${run.status}</span>
-      <span class="run-meta">${escapeHtml(run.mode || "")} · ${run.virtual_users ?? "?"} VU · ${escapeHtml(hostOf(run.target_url))}${run.summary?.distributed ? ` · ${run.summary.shards} generators` : ""}</span>
+      <!-- Engine belongs here: two runs of the same target at the same VU count can
+           differ by 3x purely on engine (JMeter caps ~2000 concurrent threads on 4
+           vCPUs where k6 reaches 5000 — see PART L). A report that omits which engine
+           produced the measurement cannot be compared to another. tests.engine is
+           already in the /runs/:id SELECT; it was simply never rendered. -->
+      <span class="run-meta">${escapeHtml(run.mode || "")} · ${escapeHtml(run.engine || "jmeter")} · ${run.virtual_users ?? "?"} VU · ${escapeHtml(hostOf(run.target_url))}${run.summary?.distributed ? ` · ${run.summary.shards} generators` : ""}</span>
       ${durationLine(run, run.summary)}
     </div>
     ${run.error ? `<p class="empty">Error: ${escapeHtml(run.error)}</p>` : ""}
@@ -964,7 +981,15 @@ function renderBrowserRun(run) {
     <div class="report-head">
       <h1>${escapeHtml(run.test_name || "Run")}</h1>
       <span class="pill ${run.status}">${run.status}</span>
-      <span class="run-meta">browser · ${escapeHtml(run.browser || "chromium")} · ${run.virtual_users ?? "?"} user(s) × ${run.loops ?? 1} loop(s) · ${escapeHtml(hostOf(run.target_url))}</span>
+      <!-- Engine named here as it is for HTTP runs (":903"). A report that omits which
+           tool produced the measurement cannot be compared with another. Browser runs
+           are always Playwright TODAY — script upload accepts only .jmx and .js
+           (see app.js:567), so no user-supplied Playwright script can run. If Playwright
+           upload ever lands (roadmap, needs sandboxing), this hardcoded label goes stale
+           SILENTLY. Read it from a field then. Also unrecorded: a test converted from a
+           Selenium .side file is indistinguishable from a hand-built one — no migration
+           tracks the import. -->
+      <span class="run-meta">browser · playwright · ${escapeHtml(run.browser || "chromium")} · ${run.virtual_users ?? "?"} user(s) × ${run.loops ?? 1} loop(s) · ${escapeHtml(hostOf(run.target_url))}</span>
       ${durationLine(run, run.summary)}
     </div>
     ${run.error ? `<p class="empty">Error: ${escapeHtml(run.error)}</p>` : ""}

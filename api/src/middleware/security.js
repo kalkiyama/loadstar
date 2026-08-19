@@ -8,6 +8,20 @@ import { isPrivateAddress } from "../lib/ssrfGuard.js";
 // verify script and the running app can never drift apart again.
 export { isPrivateAddress };
 
+// Loadstar is normally self-hosted over PLAIN HTTP (localhost, a LAN box, a
+// Codespace port). Helmet's defaults assume a TLS deployment and, merged in
+// silently, break exactly that case:
+//   - upgrade-insecure-requests: browsers re-request app.js/styles.css over
+//     https://, which the server does not speak. Safari and Chromium show an
+//     SSL error and render an unstyled, inert page. Firefox exempts localhost,
+//     which is why this went unnoticed.
+//   - HSTS (max-age 1 year, includeSubDomains): pins the ORIGIN, not the app.
+//     On localhost that poisons every other local dev server on the machine
+//     for a year, long after Loadstar is gone.
+// Both are therefore opt-in via LOADSTAR_BEHIND_TLS=true, for deployments
+// actually terminating TLS at a reverse proxy. Everything else is unchanged.
+const behindTls = process.env.LOADSTAR_BEHIND_TLS === "true";
+
 /** Standard security headers. CSP allows Google Fonts for the bundled UI only. */
 export const headers = helmet({
   contentSecurityPolicy: {
@@ -18,8 +32,11 @@ export const headers = helmet({
       scriptSrc: ["'self'"],
       imgSrc: ["'self'", "data:"],
       connectSrc: ["'self'"],
+      // null removes Helmet's merged-in default; only set when TLS is real.
+      ...(behindTls ? {} : { upgradeInsecureRequests: null }),
     },
   },
+  hsts: behindTls,
 });
 
 /** Global limiter — tune per-route for production. */

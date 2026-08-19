@@ -51,16 +51,21 @@ async function execStep(page, step) {
     case "goto":        return page.goto(step.value, { ...t, waitUntil: "domcontentloaded" });
     case "click":       return page.click(step.selector, t);
     case "fill":        return page.fill(step.selector, step.value, t);
-    case "wait_for":    return page.waitForSelector(step.selector, t);
+    case "wait_for": {
+      /* .filter({ visible: true }) BEFORE .first(). waitForSelector takes the first
+         match in DOM ORDER and waits only on that one. On jkcc.ac.in "Mission" matched
+         six elements: #1 was a dropdown link that only renders on hover, #6 was a plain
+         <h3> heading in the page body. Loadstar waited 30s on the hover-only link and
+         reported the text missing, while a perfectly visible heading sat further down.
+         "Does this appear on the page" means ANY visible match, not the first one. */
+      const wres = await waitForAnyVisible(page.locator(step.selector), STEP_TIMEOUT_MS);
+      if (!wres.ok) throw new Error(describeNoVisible(`"${step.selector}"`, wres.inDom));
+      return;
+    }
     case "pause":       return page.waitForTimeout(Number(step.value));
     case "expect_text": {
-      const found = await page
-        .getByText(step.value, { exact: false })
-        .first()
-        .waitFor(t)
-        .then(() => true)
-        .catch(() => false);
-      if (!found) throw new Error(`Expected to see the text "${step.value}" on the page, but it never appeared.`);
+      const eres = await waitForAnyVisible(page.getByText(step.value, { exact: false }), STEP_TIMEOUT_MS);
+      if (!eres.ok) throw new Error(describeNoVisible(`the text "${step.value}"`, eres.inDom));
       return;
     }
     case "expect_no_text": {
@@ -77,13 +82,13 @@ async function execStep(page, step) {
       return;
     }
     case "expect_visible": {
-      const ok = await page
-        .locator(step.selector)
-        .first()
-        .waitFor({ ...t, state: "visible" })
-        .then(() => true)
-        .catch(() => false);
-      if (!ok) throw new Error(`Expected "${step.selector}" to be visible on the page, but it never appeared.`);
+      /* Same any-visible rule as the text steps, deliberately. A precise selector
+         matches one element and behaves identically; a loose one gets the same honest
+         answer instead of silently waiting on match #0. This is also the step to reach
+         for when a specific occurrence is wanted — h3:has-text("Mission"), or
+         .content >> text=Mission — since it takes a raw CSS/Playwright selector. */
+      const vres = await waitForAnyVisible(page.locator(step.selector), STEP_TIMEOUT_MS);
+      if (!vres.ok) throw new Error(describeNoVisible(`"${step.selector}"`, vres.inDom));
       return;
     }
     case "expect_url": {
@@ -96,6 +101,64 @@ async function execStep(page, step) {
     }
     default: throw new Error(`Unknown action: ${step.action}`);
   }
+}
+
+/* Playwright tells the truth; we were throwing it away.
+   A `text=` locator that matches several elements picks the FIRST and waits for it to
+   be visible. On a real site "Mission" matched six elements, the first being a link in
+   a collapsed menu — so the step timed out and Loadstar reported "it never appeared"
+   about text that appeared six times. That is a simpler-but-false report replacing a
+   confusing-but-true one, which is the one thing this project must not do.
+   Three states, and they are NOT the same thing:
+     nothing matched          -> "never appeared" is TRUE, say it
+     matched but never shown  -> the text IS there and hidden; say THAT
+     matched and visible      -> pass
+   A hidden match still FAILS the step: a functional test asserting the user sees
+   something should fail when the user cannot. Only the wording changes. */
+/* Wait until ANY match is visible — not the first one in DOM order.
+   waitForSelector and .first() both take match #0 and wait only on that. On
+   jkcc.ac.in "Mission" matched six elements: #0 and #1 were hover-only dropdown
+   links, while #2, #3 and #5 (an <h3> heading in the page body) were plainly
+   visible. Loadstar waited 30s on a hover-only link and reported the text missing.
+   locator.filter({ visible: true }) is NOT available in Playwright 1.47 — it is
+   accepted and silently ignored, returning the unfiltered count. Verified against
+   this exact page: filtered count 6, unfiltered count 6. So poll instead; it
+   depends on no version-specific API.
+   Returns { ok, inDom, visibleCount } so the caller can tell "absent" from
+   "present but never shown". */
+async function waitForAnyVisible(loc, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let inDom = 0;
+  while (Date.now() < deadline) {
+    inDom = await loc.count().catch(() => 0);
+    for (let i = 0; i < inDom; i++) {
+      if (await loc.nth(i).isVisible().catch(() => false)) {
+        return { ok: true, inDom, visibleCount: 1 };
+      }
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return { ok: false, inDom, visibleCount: 0 };
+}
+
+/* Two failures look identical to a user and are NOT the same thing:
+     nothing matched at all       -> the content is genuinely absent
+     matched, but none ever shown -> it IS in the page and the page hides it
+   "Visible" is Playwright's meaning: in the DOM, non-zero size, not display:none or
+   visibility:hidden. Content BELOW THE FOLD counts as visible — no scrolling needed —
+   so never say "off-screen".
+   Needing a SPECIFIC occurrence (the 6th, or the one inside a heading) is a different
+   assertion; use "Check: element is visible" with a CSS selector such as
+   h3:has-text("Mission"), or upload a script, where the whole Playwright API is
+   available. Scoped text matching in the step builder is tracked separately. */
+function describeNoVisible(what, inDom) {
+  if (inDom > 0) {
+    return `Found ${what} ${inDom} time${inDom === 1 ? "" : "s"} in the page, but ` +
+           `${inDom === 1 ? "it never became" : "none of them became"} visible within the ` +
+           `step timeout — the page hides ${inDom === 1 ? "it" : "them"} (a hover-only menu, ` +
+           `a closed tab, or display:none).`;
+  }
+  return `${what} is not in the page at all — nothing matched within the step timeout.`;
 }
 
 function stepLabel(s) {
@@ -193,7 +256,13 @@ async function processRun(run) {
     summary.screenshots = screenshots; // capped; jpeg quality 40
 
     await pool.query(
-      "UPDATE runs SET status='done', finished_at=now(), summary=$1, sla_passed=$2, profile=$3 WHERE id=$4",
+      /* `analyzing`, NOT `done`. Same bug as worker.js:1279, fixed there on Aug 18
+         and MISSED here — the pattern was not grepped across both workers. Marking a
+         run done before ai_analysis exists makes the report page stop polling, see a
+         terminal status with a null analysis, and print "The analysis did not run"
+         about an analysis that is running. The real transition to done is below,
+         after the analysis has been stored. */
+      "UPDATE runs SET status='analyzing', finished_at=now(), summary=$1, sla_passed=$2, profile=$3 WHERE id=$4",
       [JSON.stringify(summary), sla ? sla.passed : null, JSON.stringify(loadProfile(t)), run.id]
     );
 
@@ -208,6 +277,10 @@ async function processRun(run) {
     } catch (e) {
       console.warn(`[browser] analysis/email skipped: ${e.message}`);
     }
+    // Only NOW is the run terminal. Outside the try above on purpose: if the analysis
+    // or the email throws, the run must still reach `done` rather than sticking in
+    // `analyzing` forever — a stuck status is worse than a missing analysis.
+    await pool.query("UPDATE runs SET status='done' WHERE id=$1", [run.id]);
     await notifyRunResult(pool, t, { ...run, status: "done" }, summary).catch(() => {});
     console.log(`[browser] run ${run.id} done: ${summary.flows_passed}/${summary.flows_total} flows passed`);
   } catch (e) {

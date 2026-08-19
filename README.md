@@ -1,40 +1,11 @@
 # Loadstar
 
-[![CI](https://github.com/kalkiyama/loadstar/actions/workflows/ci.yml/badge.svg)](https://github.com/kalkiyama/loadstar/actions/workflows/ci.yml)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/kalkiyama/loadstar)](https://github.com/kalkiyama/loadstar/releases)
+Open-source performance testing with a clean web UI. Describe the test you want — load, stress, spike, or soak — and Loadstar generates and runs the JMeter plan, streams the results into an instrument-grade report, and asks Claude to tell you what the numbers mean.
 
-**JMeter power without JMeter's pain — self-hosted and free.**
+Think of it as the open, self-hostable core of a BlazeMeter alternative: JMeter power without JMeter's UI.
 
-> Source-available under Apache-2.0: read it, run it, fork it. Loadstar is developed
-> by a single maintainer and is **not accepting external contributions** — issues and
-> pull requests are disabled. Security vulnerabilities are the exception: please open a
-> private advisory (see `SECURITY.md`).
+**New here?** Read the **[Usage Guide](USAGE.md)** — a step-by-step walkthrough of every feature, illustrated with screenshots. For deeper setup help see **[GETTING_STARTED.md](GETTING_STARTED.md)**, and for no-code browser testing see **[BROWSER_TESTING.md](BROWSER_TESTING.md)**. (An illustrated [VISUAL_GUIDE.html](VISUAL_GUIDE.html) is also included — download and open it in a browser.)
 
-Describe the test you want — load, stress, spike, soak, or a click-through browser flow —
-and Loadstar generates and runs it (JMeter, k6, or Playwright), streams the results into
-an instrument-grade report, and has Claude tell you what the numbers mean.
-
-**Why it exists:** the load-testing world is bimodal — powerful-but-painful open source,
-and pleasant-but-expensive SaaS. Loadstar is the empty seat between them: a pleasant,
-self-hostable, open-source control plane.
-
-**Why it's different:** Loadstar tells you when its own numbers are lies. Generator
-saturated? The report says your throughput number is a floor, not a ceiling. Streaming
-endpoint? It flags that "latency" hides time-to-first-token. Distributed run? Percentiles
-are merged exactly from raw histograms — never averaged. Honest numbers first; the AI
-verdict is built on top of them, not instead of them.
-
-```bash
-git clone https://github.com/kalkiyama/loadstar.git && cd loadstar
-cp .env.example .env          # add ANTHROPIC_API_KEY for AI analysis (optional)
-docker compose up --build
-open http://localhost:8080    # test something you own in the next 5 minutes
-```
-
-**New here?** The **[Usage Guide](USAGE.md)** walks every feature with screenshots ·
-**[GETTING_STARTED.md](GETTING_STARTED.md)** assumes zero terminal experience ·
-**[BROWSER_TESTING.md](BROWSER_TESTING.md)** covers no-code browser tests.
 
 ## Screenshots
 
@@ -97,7 +68,44 @@ Run tests on a schedule (every 15 min to weekly) and get webhook alerts (Slack, 
 - **Anti-abuse target verification**: public domains must prove ownership before receiving load
 - **Audit log, API-key auth, rate limiting, SSRF guards** built in from day one
 
-## Quickstart
+## Start it
+
+**macOS and Linux - double-click `Start Loadstar.command`.**
+
+It checks Docker is installed, starts it if it is not running, brings the stack up, waits
+until the API actually answers, and opens your browser. First run builds the images and
+takes about 5-10 minutes; every run after that starts in seconds.
+
+On first run it offers to put **Start Loadstar** and **Stop Loadstar** on your Desktop.
+Say yes or no - either way you can copy those files anywhere afterwards. They remember
+where Loadstar is installed, so they keep working from your Desktop, your dock, or
+anywhere else.
+
+> **macOS blocks it the first time** - it is an unsigned script. Right-click the file,
+> choose **Open**, then **Open** in the dialog. Once only.
+
+**To stop:** double-click **Stop Loadstar**. Closing the browser tab does *not* stop
+Loadstar - deliberately, so a fifteen-minute load test is not lost because you closed a
+tab. If a test is still running, Stop warns you and asks before shutting down.
+
+**Windows:** `Start Loadstar.bat` and `Stop Loadstar.bat` are included but have **not yet
+been run on Windows** - no Windows machine was available to test them. They may work; they
+may not. Bug reports genuinely welcome. Until then the terminal quickstart below is the
+reliable path on Windows.
+
+**Distributed runs:** set `LOADSTAR_WORKERS=3` in `.env` and the launcher starts that many
+load generators. A test needing N shards needs N+1 workers - the controller is itself a
+worker and blocks while coordinating - and on a single machine extra generators share the
+same CPU rather than adding capacity.
+
+> **Type the scheme: `http://localhost:8080`.** Safari and Chromium-based browsers
+> silently upgrade a bare `localhost:8080` to HTTPS, which Loadstar does not speak, and
+> the page loads unstyled and inert.
+
+> Changes under `web/` or `api/` need `docker compose up -d --build` - those directories
+> are copied into the image at build time, so `--force-recreate` restarts the old code.
+
+## Quickstart (terminal)
 
 ```bash
 cp .env.example .env          # add ANTHROPIC_API_KEY for AI analysis (optional)

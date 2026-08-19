@@ -73,7 +73,7 @@ export async function buildPptx({ test, run, summary, timeseries, analysis, hist
     return secs != null ? ` · ran ${secs >= 60 ? Math.floor(secs / 60) + "m " + (secs % 60) + "s" : secs + "s"}` : "";
   })();
   s.addText(
-    `${isBrowser ? "Browser test" : (test.mode || "load") + " test"} · ${new URL(test.target_url).hostname}${durSecs} · ${new Date().toLocaleDateString()}`,
+    `${isBrowser ? "Browser test" : (test.mode || "load") + " test"} · ${isBrowser ? (test.browser || "chromium") : (test.engine || "jmeter")} · ${new URL(test.target_url).hostname}${durSecs} · ${new Date().toLocaleDateString()}`,
     { x: 0.5, y: 1.9, w: 9, h: 0.4, fontSize: 13, color: INK2 }
   );
   s.addText(verdict.toUpperCase(), { x: 0.5, y: 2.5, w: 2.4, h: 0.6, fontSize: 20, bold: true, color: "FFFFFF", fill: { color: VC[verdict] || INK }, align: "center" });

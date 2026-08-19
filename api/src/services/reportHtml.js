@@ -225,7 +225,7 @@ export function renderReportHtml({ test, run, summary, timeseries, analysis, his
   <div style="background:#fff;border:1px solid ${C.line};border-top:none;border-radius:0 0 10px 10px;padding:28px 26px">
     <h1 style="margin:0 0 4px;font-size:24px;letter-spacing:-.01em">${esc(test.name)}</h1>
     <p style="margin:0 0 16px;color:${C.ink2};font-size:12px;font-family:monospace">
-      ${summary?.test_type === "browser" ? `browser test · ${test.browser || "chromium"} · ${test.virtual_users} user(s) × ${test.loops} loop(s)` : `${esc(test.mode || "load")} test · ${test.virtual_users} VU · ${test.duration_secs}s${summary?.distributed ? ` · ${summary.shards} generators` : ""}`}
+      ${summary?.test_type === "browser" ? `browser test · ${test.browser || "chromium"} · ${test.virtual_users} user(s) × ${test.loops} loop(s)` : `${esc(test.mode || "load")} test · ${esc(test.engine || "jmeter")} · ${test.virtual_users} VU · ${test.duration_secs}s${summary?.distributed ? ` · ${summary.shards} generators` : ""}`}
       · ${esc(new URL(test.target_url).hostname)}${
         (() => {
           let secs = summary?.wall_seconds;

@@ -1276,7 +1276,14 @@ async function processRun(run) {
       return;
     }
     await pool.query(
-      "UPDATE runs SET status='done', finished_at=now(), summary=$1, timeseries=$2, sla_passed=$3, profile=$4 WHERE id=$5",
+      /* `analyzing`, NOT `done` — the distributed path at the shard-merge call
+         site already does this and the single-generator path did not. Marking a
+         run done before ai_analysis is written opens a window (the whole length
+         of the Claude call) where the report page stops polling, sees done with
+         a null analysis, and prints "The analysis did not run" about an analysis
+         that is running. The real transition to done happens after the analysis
+         is stored, below. */
+      "UPDATE runs SET status='analyzing', finished_at=now(), summary=$1, timeseries=$2, sla_passed=$3, profile=$4 WHERE id=$5",
       [JSON.stringify(summary), JSON.stringify(timeseries), sla ? sla.passed : null, JSON.stringify(loadProfile(t)), run.id]
     );
     // AI analysis with run history, then email report — both fail-soft
