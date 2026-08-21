@@ -80,7 +80,7 @@ fi
 if [ "$ACTIVE" -gt 0 ]; then
   docker compose exec -T db psql -U loadstar -d loadstar -q -c \
     "update runs set status='cancelled', finished_at=now(),
-            error=coalesce(error, 'Stopped when Loadstar was shut down — partial results kept.')
+            error=coalesce(error, 'Stopped when Loadstar was shut down. Anything the run had already written is kept; a run killed before its first summary has no metrics.')
      where status in ('running','queued','coordinating','analyzing');" >/dev/null 2>&1 \
     && say "Marked $ACTIVE interrupted run(s) as cancelled." \
     || say "Could not mark the interrupted run(s) — they may show as still running."

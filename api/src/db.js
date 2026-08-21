@@ -69,3 +69,63 @@ export function loadProfile(test) {
  * resolution — "0 ms" would claim zero latency, which is never true.
  */
 export const fmtMs = (v) => (v == null ? "—" : Number(v) < 1 ? "<1 ms" : `${v} ms`);
+
+/* ————— live worker counting —————
+   ONE implementation, imported by the API and by both workers. worker.js had its
+   own copy hardcoded to kind='http'; browserWorker.js had none, and api/src never
+   queried the table at all — so nothing anywhere could answer "is a browser worker
+   alive?". The PDF queue therefore accepted five jobs it could not serve and the UI
+   said "a real browser is printing your report" for an hour.
+
+   Duplicating this would repeat the verify_ssrf.mjs drift: two copies of the same
+   rule, one of them quietly wrong.
+
+   Migration 019 gave `workers` a `kind` column defaulting to 'http' — the second
+   kind was anticipated and never wired. */
+export const WORKER_STALE_MS = Number(process.env.WORKER_STALE_MS || 30000);
+
+/* Dead container IDs accumulate one row forever: 13 stale of 15 after three days
+   of rebuilds, since every rebuild produces a new hostname. Nothing breaks — every
+   query filters on last_seen — but the table only grows.
+
+   Pruned from inside the beat rather than on a timer: there is no new scheduling to
+   get out of order, and both workers already call this. Probabilistic (~1 beat in
+   50) because a DELETE from every worker every 5 seconds would be 98% no-ops.
+
+   10 minutes, not the 30s stale window: a worker that is merely slow, paused, or
+   mid-restart must never have its row removed out from under it. This only clears
+   IDs that are long gone. */
+export async function beatWorker(id, kind = "http") {
+  await pool.query(
+    "INSERT INTO workers (id, kind, last_seen) VALUES ($1, $2, now()) " +
+      "ON CONFLICT (id) DO UPDATE SET last_seen = now(), kind = EXCLUDED.kind",
+    [id, kind]
+  );
+  if (Math.random() < 0.02) {
+    await pool
+      .query("DELETE FROM workers WHERE last_seen < now() - interval '10 minutes'")
+      .catch(() => {});   // housekeeping must never break a heartbeat
+  }
+}
+
+export async function liveWorkers(kind = "http", staleMs = WORKER_STALE_MS) {
+  const q = await pool.query(
+    "SELECT count(*)::int AS n FROM workers WHERE kind=$1 AND last_seen > now() - ($2 || ' milliseconds')::interval",
+    [kind, String(staleMs)]
+  );
+  return (q.rows[0] && q.rows[0].n) || 0;
+}
+
+/* Deliberately fails OPEN, unlike the shard pre-flight.
+   A missing SHARD deadlocks: rows are created and nobody claims them, so refusing
+   is the safe direction. A missing BROWSER WORKER just means a job waits — and if
+   this check itself errors, refusing would break PDF export on a perfectly healthy
+   install. So: refuse only when we positively know nothing has beaten. */
+export async function browserWorkerAvailable() {
+  try {
+    return (await liveWorkers("browser")) > 0;
+  } catch (e) {
+    console.warn(`[db] browser-worker check failed, assuming available: ${e.message}`);
+    return true;
+  }
+}

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { pool, audit } from "../db.js";
+import { pool, audit, browserWorkerAvailable } from "../db.js";
 import { validateTestInput } from "../middleware/security.js";
 import { generateJmx } from "../services/jmxGenerator.js";
 import { generateK6Script } from "../services/k6Generator.js";
@@ -140,6 +140,18 @@ r.get("/tests", async (_req, res) => {
   res.json(q.rows);
 });
 
+/* Refuse work the browser worker cannot do, AT QUEUE TIME.
+   Without this the API cheerfully accepted five PDF exports against a worker that
+   had crashed on startup, and the UI said "a real browser is printing your report"
+   for an hour. The distributed path already does exactly this for shard counts;
+   browser work had no equivalent.
+   Names the cause, the reason, and the command — the shard message does, and that
+   is why it was useful when it fired. */
+const NO_BROWSER_WORKER =
+  "No browser worker is running. This needs the worker-browser container, which " +
+  "drives a real browser. Start it with: docker compose up -d worker-browser " +
+  "(or use Start Loadstar, which brings up everything).";
+
 r.get("/tests/:id/jmx", async (req, res) => {
   const q = await pool.query("SELECT * FROM tests WHERE id=$1", [req.params.id]);
   if (!q.rows[0]) return res.status(404).json({ error: "Test not found" });
@@ -179,6 +191,8 @@ r.post("/tests/:id/runs", async (req, res) => {
 
   const gate = await isTargetAllowed(t.rows[0].target_url);
   if (!gate.allowed) return res.status(403).json({ error: gate.reason });
+  if (t.rows[0].test_type === "browser" && !(await browserWorkerAvailable()))
+    return res.status(503).json({ error: NO_BROWSER_WORKER });
   const debug = (req.body && req.body.debug === true) || false;
 
   // Browser-under-load: fire the background load run first so pressure is
@@ -396,6 +410,7 @@ r.delete("/runs/:id/baseline", async (req, res) => {
 r.post("/runs/:id/export/pdf", async (req, res) => {
   const full = await loadFullRun(req.params.id);
   if (!full) return res.status(404).json({ error: "Run not found or not finished." });
+  if (!(await browserWorkerAvailable())) return res.status(503).json({ error: NO_BROWSER_WORKER });
   const q = await pool.query("INSERT INTO exports (run_id, format) VALUES ($1,'pdf') RETURNING id", [req.params.id]);
   await audit("api", "export.pdf.queued", req.params.id);
   res.status(202).json({ id: q.rows[0].id });
@@ -407,6 +422,9 @@ r.post("/runs/:id/export/email", async (req, res) => {
   const to = (req.body?.to || full.test.notify_email || process.env.REPORT_EMAIL_TO || "").trim();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to))
     return res.status(400).json({ error: "Provide a recipient: no valid email configured for this test." });
+  // Same queue, same worker as the PDF export: the email bundle builds HTML + PDF
+  // + PowerPoint, and the PDF half needs a real browser.
+  if (!(await browserWorkerAvailable())) return res.status(503).json({ error: NO_BROWSER_WORKER });
   const q = await pool.query(
     "INSERT INTO exports (run_id, format, detail) VALUES ($1,'email_bundle',$2) RETURNING id",
     [req.params.id, JSON.stringify({ to })]

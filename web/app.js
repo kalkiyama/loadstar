@@ -1377,3 +1377,53 @@ function showApiKeyBar(force) {
 /* Show the bar on load if a key is already stored, so it is discoverable and
    clearable. In open mode with no key, nothing appears. */
 document.addEventListener("DOMContentLoaded", () => showApiKeyBar(false));
+
+/* ————— "Loadstar has stopped" —————
+   Closing the browser tab does not stop Loadstar, and Stop Loadstar cannot close
+   the tab — no script can. So a user who stops the stack is left looking at a page
+   that appears fine and is talking to nothing. Reloading gives a browser
+   connection error, which says the site is down rather than that Loadstar was shut
+   down deliberately.
+
+   Two consecutive failures before showing anything: one blip should not flash an
+   alarming message at somebody whose stack is perfectly healthy. And it clears
+   itself the moment the API answers again, so 'Start Loadstar' brings the open tab
+   back without a reload.
+
+   Built in JS with inline styles to match showApiKeyBar — this file has no build
+   step and index.html carries no template for either bar. */
+let __downStrikes = 0;
+function showStoppedBanner(down) {
+  let bar = document.getElementById("stopped-bar");
+  if (!down) { if (bar) bar.remove(); return; }
+  if (bar) return;
+
+  bar = document.createElement("div");
+  bar.id = "stopped-bar";
+  bar.style.cssText =
+    "background:#FDECEC;border-bottom:1px solid #C0392B;padding:10px 14px;" +
+    "display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:14px;color:#7B241C";
+
+  const msg = document.createElement("span");
+  msg.innerHTML =
+    "<b>Loadstar has stopped.</b> This page is no longer connected to it. " +
+    "Your tests, runs and reports are safe — use <b>Start Loadstar</b> to bring it back. " +
+    "This banner clears itself when it does.";
+  msg.style.cssText = "flex:1;min-width:260px";
+
+  bar.appendChild(msg);
+  document.body.prepend(bar);
+}
+
+setInterval(async () => {
+  try {
+    const r = await fetch("/api/config", { cache: "no-store" });
+    if (!r.ok) throw new Error(String(r.status));
+    __downStrikes = 0;
+    showStoppedBanner(false);
+  } catch {
+    // A SLOW api is still alive; only a failed connection means stopped. fetch
+    // rejects on connection failure, which is the case being caught here.
+    if (++__downStrikes >= 2) showStoppedBanner(true);
+  }
+}, 10000);

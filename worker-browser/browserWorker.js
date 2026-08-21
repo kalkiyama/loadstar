@@ -20,7 +20,8 @@ function launchBrowser(name) {
   return engine.launch(opts);
 }
 
-import { pool, loadProfile } from "../api/src/db.js";
+import os from "node:os";
+import { pool, loadProfile, beatWorker } from "../api/src/db.js";
 import { analyzeRun } from "../api/src/services/claudeAnalyst.js";
 import { notifyRunResult } from "../api/src/services/notify.js";
 import { getRunHistory, sendRunEmail } from "../api/src/services/emailReport.js";
@@ -295,10 +296,26 @@ async function processRun(run) {
   }
 }
 
+/* This worker never announced itself. Migration 019 gave `workers` a `kind`
+   column defaulting to 'http' — the second kind was anticipated and never wired,
+   so nothing anywhere could answer "is a browser worker alive?". The API queued
+   five PDF exports against a worker that had crashed on startup and told the user
+   "a real browser is printing your report" for an hour.
+
+   Beaten from INSIDE the loop rather than a setInterval: worker.js crash-looped on
+   boot because its heartbeat timer was declared above the const it depended on, and
+   node --check passes a temporal-dead-zone error. Here there is nothing to get out
+   of order — loop() runs long after every declaration in the file. */
+const WORKER_ID = os.hostname();
+
 async function loop() {
   console.log("[browser] Loadstar browser worker started (Playwright/Chromium), polling for runs…");
   for (;;) {
     try {
+      // A missed beat must never kill the worker; worst case the API stops
+      // offering browser work, which is visible and recoverable.
+      await beatWorker(WORKER_ID, "browser").catch((e) =>
+        console.warn(`[browser] heartbeat failed: ${e.message}`));
       const run = await claimNextRun();
       if (run) { await processRun(run); continue; }
       const exp = await claimNextExport();
