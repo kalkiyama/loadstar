@@ -4,3 +4,14 @@ node_modules/
 *.log
 dbdata/
 .DS_Store
+
+# Strategy documents and launch assets live ONLY in the private working repo.
+# The sync procedure uses an explicit allow-list, but a stray `git add -A` in a
+# sync clone should be physically unable to stage these. Belt and braces.
+MASTER_RECORD.md
+ROADMAP_v2.md
+HANDOFF.md
+LAUNCH_DAY_PACK.md
+launch_setup.sh
+README_HERO.md
+RELEASE_NOTES_*.md
