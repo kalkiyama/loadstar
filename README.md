@@ -123,7 +123,9 @@ Scale load generators locally:
 docker compose up --scale worker=3
 ```
 
-Run against your own local service? Keep `ALLOW_PRIVATE_TARGETS=true` (the default in `.env.example`).
+Testing `http://demo` or your own local service? Set `ALLOW_PRIVATE_TARGETS=true` in `.env`
+and restart — it ships as `false`, because an instance reachable from the internet with
+private targets allowed can be pointed at anything behind your firewall (see SECURITY.md).
 Deploying anywhere shared? Set `LOADSTAR_API_KEY`, set `ALLOW_PRIVATE_TARGETS=false`, and never enable `SKIP_TARGET_VERIFICATION`.
 
 ## Do I need an API key?

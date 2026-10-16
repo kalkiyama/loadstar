@@ -1,7 +1,7 @@
 {
   "name": "loadstar-api",
   "version": "0.1.0",
-  "description": "Loadstar \u2014 open-source performance testing platform (API + orchestrator)",
+  "description": "Loadstar — open-source performance testing platform (API + orchestrator)",
   "type": "module",
   "main": "src/server.js",
   "scripts": {
@@ -15,7 +15,7 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2",
     "helmet": "^8.3.0",
-    "nodemailer": "^9.0.3",
+    "nodemailer": "^10.0.9",
     "pg": "^8.12.0",
     "pptxgenjs": "^4.0.1",
     "uuid": "^14.0.1"
